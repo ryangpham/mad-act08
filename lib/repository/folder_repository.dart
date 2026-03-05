@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:act08/models/card.dart';
+import 'package:act08/database_helper.dart';
 import 'package:act08/models/folder.dart';
 
 class FolderRepository {
