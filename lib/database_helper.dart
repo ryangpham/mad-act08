@@ -1,9 +1,12 @@
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
+import 'package:act08/services/deck_of_cards_api.dart';
+
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
+  final DeckOfCardsApi _deckApi = DeckOfCardsApi();
 
   DatabaseHelper._init();
 
@@ -17,7 +20,14 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path,
+      version: 1,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
+      onCreate: _createDB,
+    );
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -46,8 +56,8 @@ class DatabaseHelper {
     // Prepopulate folders
     await _prepopulateFolders(db);
 
-    // Prepopulate cards
-    await _prepopulateCards(db);
+    // Prepopulate cards from API
+    await _syncCardsFromApi(db);
   }
 
   Future<void> _prepopulateFolders(Database db) async {
@@ -60,34 +70,55 @@ class DatabaseHelper {
     }
   }
 
-  Future<void> _prepopulateCards(Database db) async {
-    final suits = ['Hearts', 'Diamonds', 'Clubs', 'Spades'];
-    final cards = [
-      'Ace',
-      '2',
-      '3',
-      '4',
-      '5',
-      '6',
-      '7',
-      '8',
-      '9',
-      '10',
-      'Jack',
-      'Queen',
-      'King',
-    ];
+  Future<void> syncCardsFromApi() async {
+    final db = await database;
+    await _syncCardsFromApi(db);
+  }
 
-    for (int folderId = 1; folderId <= suits.length; folderId++) {
-      for (var card in cards) {
-        await db.insert('cards', {
-          'card_name': card,
-          'suit': suits[folderId - 1],
-          'image_url':
-              'assets/cards/${suits[folderId - 1].toLowerCase()}_$card.png',
+  Future<void> _syncCardsFromApi(Database db) async {
+    final folders = await db.query('folders', columns: ['id', 'folder_name']);
+    final folderMap = <String, int>{
+      for (final row in folders)
+        (row['folder_name'] as String).toUpperCase(): row['id'] as int,
+    };
+
+    final cards = await _deckApi.fetchStandardDeckCards();
+
+    await db.transaction((txn) async {
+      await txn.delete('cards');
+
+      for (final card in cards) {
+        final suit = (card['suit'] as String).toUpperCase();
+        final folderId = folderMap[suit];
+        if (folderId == null) {
+          continue;
+        }
+
+        await txn.insert('cards', {
+          'card_name': _formatCardValue(card['value'] as String),
+          'suit': _toTitleCase(suit),
+          'image_url': card['image'] as String?,
           'folder_id': folderId,
         });
       }
+    });
+  }
+
+  String _formatCardValue(String value) {
+    switch (value.toUpperCase()) {
+      case 'ACE':
+      case 'KING':
+      case 'QUEEN':
+      case 'JACK':
+        return _toTitleCase(value);
+      default:
+        return value;
     }
+  }
+
+  String _toTitleCase(String value) {
+    if (value.isEmpty) return value;
+    final lower = value.toLowerCase();
+    return '${lower[0].toUpperCase()}${lower.substring(1)}';
   }
 }
